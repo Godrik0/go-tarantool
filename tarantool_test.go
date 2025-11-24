@@ -196,8 +196,11 @@ func (t *benchTuple) DecodeMsgpack(dec *msgpack.Decoder) error {
 	return nil
 }
 
-func BenchmarkSync_naive_with_custom_type(b *testing.B) {
-	conn := test_helpers.ConnectWithValidation(b, dialer, opts)
+func BenchmarkSync_naive_with_custom_type_without_Release(b *testing.B) {
+	conn := test_helpers.ConnectWithValidation(b, dialer, Opts{
+		Timeout:             5 * time.Second,
+		DisableSlicePooling: true,
+	})
 	defer func() { _ = conn.Close() }()
 
 	_, err := conn.Do(

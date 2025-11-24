@@ -326,6 +326,9 @@ type Opts struct {
 	Handle interface{}
 	// Logger is user specified logger used for error messages.
 	Logger Logger
+	// DisableSlicePooling skips inner allocations of slice of bytes provided
+	// by slicePool. With disabling slice pooling, make uses instead.
+	DisableSlicePooling bool
 }
 
 // Connect creates and configures a new Connection.
@@ -864,11 +867,16 @@ func (conn *Connection) reader(r io.Reader, c Conn) {
 			fut := conn.fetchFuture(r.header.RequestId)
 			if fut == nil {
 				conn.opts.Logger.Report(LogUnexpectedResultId, conn, r.header)
-
+				if r.buf.ptr != nil {
+					slicePool.putSlice(r.buf.ptr)
+				}
 				continue
 			}
 
 			if err := fut.setResponse(r.header, &r.buf); err != nil {
+				if r.buf.ptr != nil {
+					slicePool.putSlice(r.buf.ptr)
+				}
 				fut.setError(fmt.Errorf("failed to set response: %w", err))
 			}
 			conn.markDone(fut)
@@ -877,8 +885,18 @@ func (conn *Connection) reader(r io.Reader, c Conn) {
 
 	buf := smallBuf{}
 
+	var respBytes []byte
+	var respBytesPtr *[]byte
+	var err error
+
 	for atomic.LoadUint32(&conn.state) != connClosed {
-		respBytes, err := read(r, conn.lenbuf[:])
+
+		if conn.opts.DisableSlicePooling {
+			respBytes, err = readMake(r, conn.lenbuf[:])
+		} else {
+			respBytesPtr, err = readPool(r, conn.lenbuf[:])
+		}
+
 		if err != nil {
 			err = ClientError{
 				ErrIoError,
@@ -889,12 +907,21 @@ func (conn *Connection) reader(r io.Reader, c Conn) {
 		}
 
 		buf = smallBuf{b: respBytes}
+
+		if !conn.opts.DisableSlicePooling {
+			buf.ptr = respBytesPtr
+			buf.b = *respBytesPtr
+		}
+
 		header, code, err := decodeHeader(conn.dec, &buf)
 
 		if err != nil {
 			err = ClientError{
 				ErrProtocolError,
 				fmt.Sprintf("failed to decode IPROTO header: %s", err),
+			}
+			if buf.ptr != nil {
+				slicePool.putSlice(buf.ptr)
 			}
 			conn.reconnect(err, c)
 			return
@@ -911,7 +938,13 @@ func (conn *Connection) reader(r io.Reader, c Conn) {
 				}
 				conn.opts.Logger.Report(LogWatchEventReadFailed, conn, err)
 			}
+			if buf.ptr != nil {
+				slicePool.putSlice(buf.ptr)
+			}
 		case iproto.IPROTO_CHUNK:
+			if buf.ptr != nil {
+				slicePool.putSlice(buf.ptr)
+			}
 			conn.opts.Logger.Report(LogBoxSessionPushUnsupported, conn, header)
 		default:
 			resps <- resp{header: header, buf: buf}
@@ -1209,7 +1242,39 @@ func (conn *Connection) timeouts() {
 	}
 }
 
-func read(r io.Reader, lenbuf []byte) (response []byte, err error) {
+// read uses args to allocate slices for responses using sync.Pool.
+// data must be released later using Release.
+func readPool(r io.Reader, lenbuf []byte) (response *[]byte, err error) {
+	var length uint64
+
+	if _, err = io.ReadFull(r, lenbuf); err != nil {
+		return
+	}
+	if lenbuf[0] != 0xce {
+		err = errors.New("wrong response header")
+		return
+	}
+	length = (uint64(lenbuf[1]) << 24) +
+		(uint64(lenbuf[2]) << 16) +
+		(uint64(lenbuf[3]) << 8) +
+		uint64(lenbuf[4])
+
+	switch {
+	case length == 0:
+		err = errors.New("response should not be 0 length")
+		return
+	case length > math.MaxUint32:
+		err = errors.New("response is too big")
+		return
+	}
+
+	response = slicePool.getSlice(int(length))
+	_, err = io.ReadFull(r, *response)
+
+	return
+}
+
+func readMake(r io.Reader, lenbuf []byte) (response []byte, err error) {
 	var length uint64
 
 	if _, err = io.ReadFull(r, lenbuf); err != nil {
