@@ -854,13 +854,34 @@ func (conn *Connection) reader(r io.Reader, c Conn) {
 		buf    smallBuf
 	}
 
-	resps := make(chan resp, 1024)
-	defer close(resps)
+	// respQueue is a lock-free ring buffer for response data transfer.
+	type respQueue struct {
+		buf    []resp
+		size   int
+		tail   uint64
+		head   uint64
+		closed atomic.Bool
+	}
+
+	resps := &respQueue{
+		buf:  make([]resp, 1024),
+		size: 1024,
+	}
+
+	defer resps.closed.Store(true)
 
 	go func() {
-		var r resp
+		for !resps.closed.Load() {
+			tail := atomic.LoadUint64(&resps.tail)
+			head := atomic.LoadUint64(&resps.head)
 
-		for r = range resps {
+			if head == tail {
+				continue
+			}
+
+			r := resps.buf[head%uint64(resps.size)]
+			atomic.AddUint64(&resps.head, 1)
+
 			fut := conn.fetchFuture(r.header.RequestId)
 			if fut == nil {
 				conn.opts.Logger.Report(LogUnexpectedResultId, conn, r.header)
@@ -914,7 +935,16 @@ func (conn *Connection) reader(r io.Reader, c Conn) {
 		case iproto.IPROTO_CHUNK:
 			conn.opts.Logger.Report(LogBoxSessionPushUnsupported, conn, header)
 		default:
-			resps <- resp{header: header, buf: buf}
+			for !resps.closed.Load() {
+				tail := atomic.LoadUint64(&resps.tail)
+				head := atomic.LoadUint64(&resps.head)
+
+				if tail-head < uint64(resps.size) {
+					resps.buf[tail%uint64(resps.size)] = resp{header: header, buf: buf}
+					atomic.AddUint64(&resps.tail, 1)
+					break
+				}
+			}
 		}
 	}
 }
