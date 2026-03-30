@@ -17,6 +17,7 @@ import (
 	"log"
 	"sync"
 	"time"
+	"log/slog"
 
 	"github.com/tarantool/go-iproto"
 
@@ -81,6 +82,8 @@ type Opts struct {
 	CheckTimeout time.Duration
 	// ConnectionHandler provides an ability to handle connection updates.
 	ConnectionHandler ConnectionHandler
+	// Logger is used for logging interval events of the pool.
+	Logger *slog.logger
 }
 
 /*
@@ -116,6 +119,7 @@ type ConnectionPool struct {
 	anyPool          *roundRobinStrategy
 	poolsMutex       sync.RWMutex
 	watcherContainer watcherContainer
+	logger *slog.Logger
 }
 
 var _ Pooler = (*ConnectionPool)(nil)
@@ -165,6 +169,10 @@ func ConnectWithOpts(ctx context.Context, instances []Instance,
 	if opts.CheckTimeout <= 0 {
 		return nil, ErrWrongCheckTimeout
 	}
+	//Use default logger, if logger is null.
+	if opts.Logger == nil {
+        opts.Logger = slog.Default()
+    }
 
 	size := len(instances)
 	rwPool := newRoundRobinStrategy(size)
@@ -179,6 +187,7 @@ func ConnectWithOpts(ctx context.Context, instances []Instance,
 		rwPool:  rwPool,
 		roPool:  roPool,
 		anyPool: anyPool,
+		logger: opts.Logger,
 	}
 
 	fillCtx, fillCancel := context.WithCancel(ctx)
@@ -323,7 +332,7 @@ func (p *ConnectionPool) Add(ctx context.Context, instance Instance) error {
 			close(e.closed)
 			return err
 		} else {
-			log.Printf("tarantool: connect to %s failed: %s\n", instance.Name, err)
+			p.logger.Error("connect to instance failed",slog.String("name", name),slog.Any("error", err))
 		}
 	}
 
@@ -693,7 +702,7 @@ func (p *ConnectionPool) handlerDiscovered(name string, conn *tarantool.Connecti
 	}
 
 	if err != nil {
-		log.Printf("tarantool: storing connection to %s canceled: %s\n", name, err)
+		p.logger.Warn("storing connection canceled", slog.String("name", name), slog.Any("error", err))
 		return false
 	}
 	return true
