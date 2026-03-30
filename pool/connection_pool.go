@@ -14,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"sync"
 	"time"
@@ -832,8 +831,9 @@ func (p *ConnectionPool) tryConnect(ctx context.Context, e *endpoint) error {
 
 		if err != nil {
 			_ = conn.Close()
-			log.Printf("tarantool: storing connection to %s failed: %s\n",
-				e.name, err)
+			p.logger.Error("storing connection failed",
+				slog.String("name", e.name),
+				slog.Any("error", err))
 			return err
 		}
 
@@ -881,7 +881,7 @@ func (p *ConnectionPool) reconnect(ctx context.Context, e *endpoint) {
 	e.role = UnknownRole
 
 	if err := p.tryConnect(ctx, e); err != nil {
-		log.Printf("tarantool: reconnect to %s failed: %s\n", e.name, err)
+		p.logger.Error("reconnect failed", slog.String("name", e.name), slog.Any("error", err))
 	}
 }
 
@@ -972,8 +972,7 @@ func (p *ConnectionPool) controller(ctx context.Context, e *endpoint) {
 					switch {
 					case e.conn == nil:
 						if err := p.tryConnect(ctx, e); err != nil {
-							log.Printf("tarantool: reopen connection to %s failed: %s\n",
-								e.name, err)
+							p.logger.Error("reopen connection failed", slog.String("name", e.name), slog.Any("error", err))
 						}
 					case !e.conn.ClosedNow():
 						p.updateConnection(e)
