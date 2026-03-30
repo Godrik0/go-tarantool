@@ -168,7 +168,7 @@ func ConnectWithOpts(ctx context.Context, instances []Instance,
 	if opts.CheckTimeout <= 0 {
 		return nil, ErrWrongCheckTimeout
 	}
-	//Use default logger, if logger is null.
+	// Use default logger, if logger is null.
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
@@ -715,7 +715,8 @@ func (p *ConnectionPool) handlerDeactivated(name string, conn *tarantool.Connect
 	}
 
 	if err != nil {
-		p.logger.Warn("deactivating connection to by user failed", slog.String("name", name), slog.Any("error", err))
+		p.logger.Warn("deactivating connection to by user failed",
+			slog.String("name", name), slog.Any("error", err))
 	}
 }
 
@@ -972,7 +973,8 @@ func (p *ConnectionPool) controller(ctx context.Context, e *endpoint) {
 					switch {
 					case e.conn == nil:
 						if err := p.tryConnect(ctx, e); err != nil {
-							p.logger.Error("reopen connection failed", slog.String("name", e.name), slog.Any("error", err))
+							p.logger.Error("reopen connection failed",
+								slog.String("name", e.name), slog.Any("error", err))
 						}
 					case !e.conn.ClosedNow():
 						p.updateConnection(e)
