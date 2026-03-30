@@ -82,7 +82,7 @@ type Opts struct {
 	// ConnectionHandler provides an ability to handle connection updates.
 	ConnectionHandler ConnectionHandler
 	// Logger is used for logging interval events of the pool.
-	Logger *slog.logger
+	Logger *slog.Logger
 }
 
 /*
@@ -331,7 +331,7 @@ func (p *ConnectionPool) Add(ctx context.Context, instance Instance) error {
 			close(e.closed)
 			return err
 		} else {
-			p.logger.Error("connect to instance failed", slog.String("name", name), slog.Any("error", err))
+			p.logger.Error("connect to instance failed", slog.String("name", e.name), slog.Any("error", err))
 		}
 	}
 
