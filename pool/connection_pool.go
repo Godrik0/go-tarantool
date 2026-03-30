@@ -15,9 +15,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"sync"
 	"time"
-	"log/slog"
 
 	"github.com/tarantool/go-iproto"
 
@@ -119,7 +119,7 @@ type ConnectionPool struct {
 	anyPool          *roundRobinStrategy
 	poolsMutex       sync.RWMutex
 	watcherContainer watcherContainer
-	logger *slog.Logger
+	logger           *slog.Logger
 }
 
 var _ Pooler = (*ConnectionPool)(nil)
@@ -171,8 +171,8 @@ func ConnectWithOpts(ctx context.Context, instances []Instance,
 	}
 	//Use default logger, if logger is null.
 	if opts.Logger == nil {
-        opts.Logger = slog.Default()
-    }
+		opts.Logger = slog.Default()
+	}
 
 	size := len(instances)
 	rwPool := newRoundRobinStrategy(size)
@@ -187,7 +187,7 @@ func ConnectWithOpts(ctx context.Context, instances []Instance,
 		rwPool:  rwPool,
 		roPool:  roPool,
 		anyPool: anyPool,
-		logger: opts.Logger,
+		logger:  opts.Logger,
 	}
 
 	fillCtx, fillCancel := context.WithCancel(ctx)
@@ -332,7 +332,7 @@ func (p *ConnectionPool) Add(ctx context.Context, instance Instance) error {
 			close(e.closed)
 			return err
 		} else {
-			p.logger.Error("connect to instance failed",slog.String("name", name),slog.Any("error", err))
+			p.logger.Error("connect to instance failed", slog.String("name", name), slog.Any("error", err))
 		}
 	}
 
@@ -678,7 +678,7 @@ func (p *ConnectionPool) addConnection(name string,
 			for _, watcher := range watched {
 				watcher.unwatch(conn)
 			}
-			log.Printf("tarantool: failed initialize watchers for %s: %s", name, err)
+			p.logger.Warn("failed initialize watchers ", slog.String("name", name), slog.Any("error", err))
 			return err
 		}
 	}
@@ -716,8 +716,7 @@ func (p *ConnectionPool) handlerDeactivated(name string, conn *tarantool.Connect
 	}
 
 	if err != nil {
-		log.Printf("tarantool: deactivating connection to %s by user failed: %s\n",
-			name, err)
+		p.logger.Warn("deactivating connection to by user failed", slog.String("name", name), slog.Any("error", err))
 	}
 }
 
@@ -737,7 +736,7 @@ func (p *ConnectionPool) fillPools(ctx context.Context, instances []Instance) <-
 
 		go func() {
 			if err := p.tryConnect(ctx, end); err != nil {
-				log.Printf("tarantool: connect to %s failed: %s\n", name, err)
+				p.logger.Warn("connect to instance failed", slog.String("name", name), slog.Any("error", err))
 				done <- fmt.Errorf("failed to connect to %s :%w", name, err)
 
 				return
